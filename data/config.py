@@ -9,7 +9,7 @@ cfg_mnet = {
     'loc_weight': 2.0,
     'gpu_train': True,
     'batch_size': 32,
-    'ngpu': 1,
+    'ngpu': 0,
     'epoch': 250,
     'decay1': 190,
     'decay2': 220,

@@ -34,6 +34,7 @@ class BboxHead(nn.Module):
 
         return out.view(out.shape[0], -1, 4)
 
+
 class LandmarkHead(nn.Module):
     def __init__(self,inchannels=512,num_anchors=3):
         super(LandmarkHead,self).__init__()
@@ -44,6 +45,7 @@ class LandmarkHead(nn.Module):
         out = out.permute(0,2,3,1).contiguous()
 
         return out.view(out.shape[0], -1, 10)
+
 
 class RetinaFace(nn.Module):
     def __init__(self, cfg = None, phase = 'train'):

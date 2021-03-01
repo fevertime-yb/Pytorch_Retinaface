@@ -14,7 +14,7 @@ import math
 from models.retinaface import RetinaFace
 
 parser = argparse.ArgumentParser(description='Retinaface Training')
-parser.add_argument('--training_dataset', default='./data/widerface/train/label.txt', help='Training dataset directory')
+parser.add_argument('--training_dataset', default='/Users/yback/workspace/dataset/widerface/train/label.txt', help='Training dataset directory')
 parser.add_argument('--network', default='mobile0.25', help='Backbone network mobile0.25 or resnet50')
 parser.add_argument('--num_workers', default=4, type=int, help='Number of workers used in dataloading')
 parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float, help='initial learning rate')
@@ -24,7 +24,6 @@ parser.add_argument('--resume_epoch', default=0, type=int, help='resume iter for
 parser.add_argument('--weight_decay', default=5e-4, type=float, help='Weight decay for SGD')
 parser.add_argument('--gamma', default=0.1, type=float, help='Gamma update for SGD')
 parser.add_argument('--save_folder', default='./weights/', help='Location to save checkpoint models')
-
 args = parser.parse_args()
 
 if not os.path.exists(args.save_folder):
@@ -77,14 +76,15 @@ else:
 
 cudnn.benchmark = True
 
-
 optimizer = optim.SGD(net.parameters(), lr=initial_lr, momentum=momentum, weight_decay=weight_decay)
 criterion = MultiBoxLoss(num_classes, 0.35, True, 0, True, 7, 0.35, False)
 
 priorbox = PriorBox(cfg, image_size=(img_dim, img_dim))
+
 with torch.no_grad():
     priors = priorbox.forward()
     priors = priors.cuda()
+
 
 def train():
     net.train()
@@ -134,6 +134,7 @@ def train():
         load_t1 = time.time()
         batch_time = load_t1 - load_t0
         eta = int(batch_time * (max_iter - iteration))
+
         print('Epoch:{}/{} || Epochiter: {}/{} || Iter: {}/{} || Loc: {:.4f} Cla: {:.4f} Landm: {:.4f} || LR: {:.8f} || Batchtime: {:.4f} s || ETA: {}'
               .format(epoch, max_epoch, (iteration % epoch_size) + 1,
               epoch_size, iteration + 1, max_iter, loss_l.item(), loss_c.item(), loss_landm.item(), lr, batch_time, str(datetime.timedelta(seconds=eta))))
@@ -155,6 +156,7 @@ def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_s
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr
+
 
 if __name__ == '__main__':
     train()
