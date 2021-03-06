@@ -6,6 +6,7 @@ import torch.utils.data as data
 import cv2
 import numpy as np
 
+
 class WiderFaceDetection(data.Dataset):
     def __init__(self, txt_path, preproc=None):
         self.preproc = preproc
@@ -75,6 +76,7 @@ class WiderFaceDetection(data.Dataset):
             img, target = self.preproc(img, target)
 
         return torch.from_numpy(img), target
+
 
 def detection_collate(batch):
     """Custom collate fn for dealing with batches of images that have a different

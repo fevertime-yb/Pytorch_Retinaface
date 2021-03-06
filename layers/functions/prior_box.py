@@ -1,18 +1,17 @@
-import torch
 from itertools import product as product
-import numpy as np
 from math import ceil
+
+import torch
 
 
 class PriorBox(object):
-    def __init__(self, cfg, image_size=None, phase='train'):
+    def __init__(self, cfg, image_size=None, phase="train"):
         super(PriorBox, self).__init__()
-        self.min_sizes = cfg['min_sizes']
-        self.steps = cfg['steps']
-        self.clip = cfg['clip']
+        self.min_sizes = cfg["min_sizes"]
+        self.steps = cfg["steps"]
+        self.clip = cfg["clip"]
         self.image_size = image_size
         self.feature_maps = [[ceil(self.image_size[0]/step), ceil(self.image_size[1]/step)] for step in self.steps]
-        self.name = "s"
 
     def forward(self):
         anchors = []
@@ -28,7 +27,7 @@ class PriorBox(object):
                         anchors += [cx, cy, s_kx, s_ky]
 
         # back to torch land
-        output = torch.Tensor(anchors).view(-1, 4)
+        output = torch.tensor(anchors).view(-1, 4)
         if self.clip:
             output.clamp_(max=1, min=0)
         return output
