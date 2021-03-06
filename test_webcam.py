@@ -15,6 +15,7 @@ from utils.box_utils import decode, decode_landm
 from utils.nms.py_cpu_nms import py_cpu_nms
 from utils.timer import Timer
 from utils.util import *
+from pytorch_bn_fusion.bn_fusion import fuse_bn_recursively
 
 
 parser = argparse.ArgumentParser(description='Retinaface')
@@ -24,6 +25,8 @@ parser.add_argument('--origin_size', action="store_true", default=False,
                     help='Whether use origin image size to evaluate')
 parser.add_argument('--video-path', default=None, type=str,
                     help='input video path')
+parser.add_argument("--bn_fusion", action="store_true",
+                    help="Fusing model's convolution and batch norm layer")
 args = parser.parse_args()
 
 
@@ -42,12 +45,13 @@ if __name__ == '__main__':
     cudnn.benchmark = True
     net = net.to(device)
 
-    _t = {"inference": Timer(), "post_process": Timer()}
+    if args.bn_fusion:
+        net = fuse_bn_recursively(net)
 
-    print_params_FLOPS(net)
+    im_height = cfg["im_height"] * 4 if args.origin_size else cfg["im_height"]
+    im_width = cfg["im_width"] * 4 if args.origin_size else cfg["im_width"]
 
-    im_height = 270 * 4 if args.origin_size else 270
-    im_width = 480 * 4 if args.origin_size else 480
+    print_FLOPS(net, input_size=(3, im_width, im_height))
 
     priorbox = PriorBox(cfg, image_size=(im_height, im_width))
     priors = priorbox.forward()
@@ -59,6 +63,8 @@ if __name__ == '__main__':
     scale1 = torch.tensor([im_width, im_height, im_width, im_height,
                            im_width, im_height, im_width, im_height,
                            im_width, im_height], dtype=torch.float, device=device)
+
+    _t = {"inference": Timer(), "post_process": Timer()}
 
     capture = cv2.VideoCapture(args.video_path if args.video_path else 0)
     cv2.namedWindow("VideoFrame", cv2.WINDOW_NORMAL)
@@ -120,11 +126,14 @@ if __name__ == '__main__':
         cv2.imshow("VideoFrame", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+        if _t["inference"].calls == 1000:
+            break
 
     capture.release()
     cv2.destroyAllWindows()
 
-    print("Model inference time: {:.4f} msec | NMS time: {:.4f} msec".format(
+    print("Model inference time: {:.4f} msec | NMS time: {:.4f} msec | images: {}".format(
         _t["inference"].average_time * 1000,
-        _t["post_process"].average_time * 1000)
+        _t["post_process"].average_time * 1000,
+        _t["inference"].calls)
     )

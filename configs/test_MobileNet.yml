@@ -24,3 +24,5 @@
 "nms_threshold": 0.4
 "keep_top_k": 750
 "vis_thresh": 0.5
+"im_height": 270
+"im_width": 480

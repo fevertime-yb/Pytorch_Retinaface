@@ -14,7 +14,12 @@ def toTensor(img, device, mean=(128, 128, 128)):
     return img
 
 
-def print_params_FLOPS(model, input_size=(3, 640, 480)):
+def print_params(model):
+    total_params = sum(p.numel() for p in model.parameters())
+    print("Parameters:", total_params)
+
+
+def print_FLOPS(model, input_size=(3, 640, 480)):
 
     macs, params = get_model_complexity_info(model=model,
                                              input_res=input_size,
