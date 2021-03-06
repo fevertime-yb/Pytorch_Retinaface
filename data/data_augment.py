@@ -59,8 +59,7 @@ def _crop(image, boxes, labels, landm, img_dim):
         landms_t[:, :, :2] = np.minimum(landms_t[:, :, :2], roi[2:] - roi[:2])
         landms_t = landms_t.reshape([-1, 10])
 
-
-	# make sure that the cropped image contains at least one face > 16 pixel at training image scale
+        # make sure that the cropped image contains at least one face > 16 pixel at training image scale
         b_w_t = (boxes_t[:, 2] - boxes_t[:, 0] + 1) / w * img_dim
         b_h_t = (boxes_t[:, 3] - boxes_t[:, 1] + 1) / h * img_dim
         mask_b = np.minimum(b_w_t, b_h_t) > 0.0

@@ -7,7 +7,6 @@ import cv2
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
-from ptflops import get_model_complexity_info
 
 from data import cfg_mnet, cfg_re50
 from layers.functions.prior_box import PriorBox
@@ -15,58 +14,32 @@ from models.retinaface import RetinaFace
 from utils.box_utils import decode, decode_landm
 from utils.nms.py_cpu_nms import py_cpu_nms
 from utils.timer import Timer
+from utils.util import *
+
 
 parser = argparse.ArgumentParser(description='Retinaface')
 parser.add_argument('-m', '--trained_model', default='./weights/Resnet50_Final.pth',
                     type=str, help='Trained state_dict file path to open')
-parser.add_argument('--network', default='resnet50', help='Backbone network mobile0.25 or resnet50')
-parser.add_argument('--origin_size', default=True, type=str, help='Whether use origin image size to evaluate')
-parser.add_argument('--save_folder', default='./widerface_evaluate/widerface_txt/', type=str, help='Dir to save txt results')
-parser.add_argument('--cpu', action="store_true", default=True, help='Use cpu inference')
-parser.add_argument('--dataset_folder', default='/Users/yback/workspace/dataset/widerface/val/images/', type=str, help='dataset path')
-parser.add_argument('--confidence_threshold', default=0.02, type=float, help='confidence_threshold')
-parser.add_argument('--top_k', default=5000, type=int, help='top_k')
-parser.add_argument('--nms_threshold', default=0.4, type=float, help='nms_threshold')
-parser.add_argument('--keep_top_k', default=750, type=int, help='keep_top_k')
-parser.add_argument('-s', '--save_image', action="store_true", default=False, help='show detection results')
-parser.add_argument('--vis_thres', default=0.5, type=float, help='visualization_threshold')
+parser.add_argument('--network', default='resnet50', type=str,
+                    choices=["mobile0.25", "resnet50"],
+                    help="Backbone network mobile0.25 or resnet50")
+parser.add_argument('--origin_size', action="store_true", default=False,
+                    help='Whether use origin image size to evaluate')
+parser.add_argument('--confidence_threshold', default=0.02, type=float,
+                    help='confidence_threshold')
+parser.add_argument('--top_k', default=5000, type=int,
+                    help='top_k')
+parser.add_argument('--nms_threshold', default=0.4, type=float,
+                    help='nms_threshold')
+parser.add_argument('--keep_top_k', default=750, type=int,
+                    help='keep_top_k')
+parser.add_argument('-s', '--save_image', action="store_true", default=False,
+                    help='show detection results')
+parser.add_argument('--vis_thresh', default=0.5, type=float,
+                    help='visualization_threshold')
+parser.add_argument('--video-path', default=None, type=str,
+                    help='input video path')
 args = parser.parse_args()
-
-
-def check_keys(model, pretrained_state_dict):
-    ckpt_keys = set(pretrained_state_dict.keys())
-    model_keys = set(model.state_dict().keys())
-    used_pretrained_keys = model_keys & ckpt_keys
-    unused_pretrained_keys = ckpt_keys - model_keys
-    missing_keys = model_keys - ckpt_keys
-    print('Missing keys:{}'.format(len(missing_keys)))
-    print('Unused checkpoint keys:{}'.format(len(unused_pretrained_keys)))
-    print('Used keys:{}'.format(len(used_pretrained_keys)))
-    assert len(used_pretrained_keys) > 0, 'load NONE from pretrained checkpoint'
-    return True
-
-
-def remove_prefix(state_dict, prefix):
-    ''' Old style model is stored with all names of parameters sharing common prefix 'module.' '''
-    print('remove prefix \'{}\''.format(prefix))
-    f = lambda x: x.split(prefix, 1)[-1] if x.startswith(prefix) else x
-    return {f(key): value for key, value in state_dict.items()}
-
-
-def load_model(model, pretrained_path, load_to_cpu):
-    print('Loading pretrained model from {}'.format(pretrained_path))
-    if load_to_cpu:
-        pretrained_dict = torch.load(pretrained_path, map_location=lambda storage, loc: storage)
-    else:
-        device = torch.cuda.current_device()
-        pretrained_dict = torch.load(pretrained_path, map_location=lambda storage, loc: storage.cuda(device))
-    if "state_dict" in pretrained_dict.keys():
-        pretrained_dict = remove_prefix(pretrained_dict['state_dict'], 'module.')
-    else:
-        pretrained_dict = remove_prefix(pretrained_dict, 'module.')
-    check_keys(model, pretrained_dict)
-    model.load_state_dict(pretrained_dict, strict=False)
-    return model
 
 
 if __name__ == '__main__':
@@ -78,133 +51,100 @@ if __name__ == '__main__':
     elif args.network == "resnet50":
         cfg = cfg_re50
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # net and model
-    net = RetinaFace(cfg=cfg, phase='test')
-    net = load_model(net, args.trained_model, args.cpu)
+    net = RetinaFace(cfg=cfg, phase="test")
+    net = load_model(net, args.trained_model, device)
     net.eval()
-    print('Finished loading model!')
     cudnn.benchmark = True
-    device = torch.device("cpu" if args.cpu else "cuda")
     net = net.to(device)
 
-    # testing dataset
-    testset_folder = args.dataset_folder
-    testset_list = args.dataset_folder[:-7] + "wider_val.txt"
+    _t = {"inference": Timer(), "post_process": Timer()}
 
-    with open(testset_list, 'r') as fr:
-        test_dataset = fr.read().split()
-    num_images = len(test_dataset)
+    print_params_FLOPS(net)
 
-    _t = {'forward_pass': Timer(), 'misc': Timer()}
+    im_height = 270
+    im_width = 480
 
-    macs, params = get_model_complexity_info(net, (3, 640, 480), as_strings=True,
-                                             print_per_layer_stat=False, verbose=True)
-    print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
-    print('{:<30}  {:<8}'.format('Number of parameters: ', params))
+    priorbox = PriorBox(cfg, image_size=(im_height, im_width))
+    priors = priorbox.forward()
+    priors = priors.to(device)
+    prior_data = priors.data
 
-    capture = cv2.VideoCapture(0)
-    capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    scale = torch.tensor([im_width, im_height, im_width, im_height], dtype=torch.float, device=device)
 
-    # testing begin
-    while True:
+    scale1 = torch.tensor([im_width, im_height, im_width, im_height,
+                           im_width, im_height, im_width, im_height,
+                           im_width, im_height], dtype=torch.float, device=device)
+
+    if not args.video_path:
+        raise RuntimeError("check video path")
+
+    capture = cv2.VideoCapture(args.video_path)
+    cv2.namedWindow("VideoFrame", cv2.WINDOW_NORMAL)
+
+    while capture.isOpened():
         ret, frame = capture.read()
-        cv2.imshow("VideoFrame", frame)
-
-        img = np.float32(frame)
-
-        # testing scale
-        target_size = 1600
-        max_size = 2150
-        im_shape = img.shape
-        im_size_min = np.min(im_shape[0:2])
-        im_size_max = np.max(im_shape[0:2])
-        resize = float(target_size) / float(im_size_min)
-        # prevent bigger axis from being more than max_size:
-        if np.round(resize * im_size_max) > max_size:
-            resize = float(max_size) / float(im_size_max)
         if args.origin_size:
-            resize = 1
+            frame = cv2.resize(frame, dsize=(im_width, im_height), interpolation=cv2.INTER_CUBIC)
+        img = np.float32(frame)
+        im_height, im_width, im_channel = img.shape
 
-        if resize != 1:
-            img = cv2.resize(img, None, None, fx=resize, fy=resize, interpolation=cv2.INTER_LINEAR)
-        im_height, im_width, _ = img.shape
-        scale = torch.Tensor([img.shape[1], img.shape[0], img.shape[1], img.shape[0]])
-        img -= (104, 117, 123)
-        img = img.transpose(2, 0, 1)
-        img = torch.from_numpy(img).unsqueeze(0)
-        img = img.to(device)
-        scale = scale.to(device)
+        # normalize input tensor
+        img = toTensor(img, device=device, mean=(104, 117, 123))
 
-        _t['forward_pass'].tic()
-        loc, conf, landms = net(img)  # forward pass
-        _t['forward_pass'].toc()
-        _t['misc'].tic()
-        priorbox = PriorBox(cfg, image_size=(im_height, im_width))
-        priors = priorbox.forward()
-        priors = priors.to(device)
-        prior_data = priors.data
+        _t["inference"].tic()
+        loc, conf, landmarks = net(img)
+        _t["inference"].toc()
+
+        _t["post_process"].tic()
         boxes = decode(loc.data.squeeze(0), prior_data, cfg['variance'])
-        boxes = boxes * scale / resize
+        boxes = boxes * scale
         boxes = boxes.cpu().numpy()
+
         scores = conf.squeeze(0).data.cpu().numpy()[:, 1]
-        landms = decode_landm(landms.data.squeeze(0), prior_data, cfg['variance'])
-        scale1 = torch.Tensor([img.shape[3], img.shape[2], img.shape[3], img.shape[2],
-                               img.shape[3], img.shape[2], img.shape[3], img.shape[2],
-                               img.shape[3], img.shape[2]])
-        scale1 = scale1.to(device)
-        landms = landms * scale1 / resize
-        landms = landms.cpu().numpy()
+
+        landmarks = decode_landm(landmarks.data.squeeze(0), prior_data, cfg['variance'])
+        landmarks = landmarks * scale1
+        landmarks = landmarks.cpu().numpy()
 
         # ignore low scores
-        inds = np.where(scores > args.confidence_threshold)[0]
-        boxes = boxes[inds]
-        landms = landms[inds]
-        scores = scores[inds]
+        idx = np.where(scores > args.confidence_threshold)[0]
+        boxes = boxes[idx]
+        landmarks = landmarks[idx]
+        scores = scores[idx]
 
         # keep top-K before NMS
         order = scores.argsort()[::-1]
         # order = scores.argsort()[::-1][:args.top_k]
         boxes = boxes[order]
-        landms = landms[order]
+        landmarks = landmarks[order]
         scores = scores[order]
 
         # do NMS
-        dets = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
-        keep = py_cpu_nms(dets, args.nms_threshold)
-        # keep = nms(dets, args.nms_threshold,force_cpu=args.cpu)
-        dets = dets[keep, :]
-        landms = landms[keep]
+        detecting = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
+        keep = py_cpu_nms(detecting, args.nms_threshold)
+        detecting = detecting[keep, :]
+        landmarks = landmarks[keep]
 
         # keep top-K faster NMS
-        # dets = dets[:args.keep_top_k, :]
-        # landms = landms[:args.keep_top_k, :]
+        # detecting = detecting[:args.keep_top_k, :]
+        # landmarks = landmarks[:args.keep_top_k, :]
 
-        dets = np.concatenate((dets, landms), axis=1)
-        _t['misc'].toc()
+        detecting = np.concatenate((detecting, landmarks), axis=1)
+        _t["post_process"].toc()
 
-        for b in dets:
-            if b[4] < args.vis_thres:
-                continue
-            text = "{:.4f}".format(b[4])
-            b = list(map(int, b))
-            cv2.rectangle(frame, (b[0], b[1]), (b[2], b[3]), (0, 0, 255), 2)
-            cx = b[0]
-            cy = b[1] + 12
-            cv2.putText(frame, text, (cx, cy),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255))
+        frame = draw_result(frame, detecting, args.vis_thresh)
 
-            # landms
-            cv2.circle(frame, (b[5], b[6]), 1, (0, 0, 255), 4)
-            cv2.circle(frame, (b[7], b[8]), 1, (0, 255, 255), 4)
-            cv2.circle(frame, (b[9], b[10]), 1, (255, 0, 255), 4)
-            cv2.circle(frame, (b[11], b[12]), 1, (0, 255, 0), 4)
-            cv2.circle(frame, (b[13], b[14]), 1, (255, 0, 0), 4)
-
-        cv2.imshow("Result", frame)
-        key = cv2.waitKey(0)
-        if key == ord('q'):
+        cv2.imshow("VideoFrame", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     capture.release()
     cv2.destroyAllWindows()
+
+    print("inference time: {:.4f}s | nms time: {:.4f}s".format(
+        _t["inference"].average_time,
+        _t["post_process"].average_time)
+    )
